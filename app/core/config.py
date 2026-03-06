@@ -16,9 +16,9 @@ class IngestionSettings:
     upload_chunk_size_bytes: int
     langchain_chunk_size: int
     langchain_chunk_overlap: int
-    pinecone_api_key: str | None = None
-    pinecone_index_name: str | None = None
-    pinecone_namespace: str | None = None
+    vector_provider: str
+    chroma_persist_dir: Path
+    chroma_collection_name: str
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int | None = None
@@ -28,6 +28,7 @@ class IngestionSettings:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        self.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _load_local_env_file(path: Path) -> None:
@@ -72,9 +73,14 @@ def load_settings() -> IngestionSettings:
     langchain_chunk_overlap = int(
         os.getenv("INGESTION_LANGCHAIN_CHUNK_OVERLAP", "150")
     )
-    pinecone_api_key = os.getenv("PINECONE_API_KEY")
-    pinecone_index_name = os.getenv("PINECONE_INDEX_NAME")
-    pinecone_namespace = os.getenv("PINECONE_NAMESPACE")
+    chroma_persist_dir = Path(
+        os.getenv("INGESTION_CHROMA_PERSIST_DIR", str(data_dir / "chroma"))
+    )
+    vector_provider = os.getenv("INGESTION_VECTOR_PROVIDER", "chroma").strip().lower()
+    chroma_collection_name = os.getenv(
+        "INGESTION_CHROMA_COLLECTION",
+        "ingestion_chunks",
+    )
     openai_api_key = os.getenv("OPENAI_API_KEY")
     openai_embedding_model = os.getenv(
         "OPENAI_EMBEDDING_MODEL",
@@ -95,9 +101,9 @@ def load_settings() -> IngestionSettings:
         upload_chunk_size_bytes=upload_chunk_size_bytes,
         langchain_chunk_size=langchain_chunk_size,
         langchain_chunk_overlap=langchain_chunk_overlap,
-        pinecone_api_key=pinecone_api_key,
-        pinecone_index_name=pinecone_index_name,
-        pinecone_namespace=pinecone_namespace,
+        vector_provider=vector_provider,
+        chroma_persist_dir=chroma_persist_dir,
+        chroma_collection_name=chroma_collection_name,
         openai_api_key=openai_api_key,
         openai_embedding_model=openai_embedding_model,
         openai_embedding_dimensions=openai_embedding_dimensions,

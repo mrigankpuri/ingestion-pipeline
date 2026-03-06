@@ -1,5 +1,8 @@
 .idea/*
 .venv/
+.venv_*/
+venv/
+venv_*/
 .env
 .env.local
 .pytest_cache/

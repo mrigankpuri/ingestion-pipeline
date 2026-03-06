@@ -62,7 +62,16 @@ def create_app(
     app.include_router(ingestion_router)
 
     @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def healthz() -> dict[str, object]:
+        components = {
+            "sqlite": repository.connectivity_status(),
+            "storage": file_store.connectivity_status(),
+            "vector_store": resolved_vector_indexer.connectivity_status(),
+        }
+        is_ok = all(
+            component.get("status") in {"up", "skipped"}
+            for component in components.values()
+        )
+        return {"status": "ok" if is_ok else "degraded", "components": components}
 
     return app

@@ -10,7 +10,8 @@ This service is a cleaner starting point for the old GC `runner-gpt` ingestion f
 - exposes a polling endpoint for job status
 - honors mid-flight delete requests and cleans up local artifacts before setting the terminal completion event
 - builds LangChain `Document` objects and chunks them with `RecursiveCharacterTextSplitter`
-- can upsert completed chunks into Pinecone when `PINECONE_API_KEY`, `PINECONE_INDEX_NAME`, and `OPENAI_API_KEY` are configured
+- stores vectors in local persistent Chroma DB by default
+- keeps vector provider pluggable via `INGESTION_VECTOR_PROVIDER` (`chroma` now, easy to add more later)
 
 The first processor is intentionally simple, but it now uses LangChain primitives as the baseline. It converts uploads into LangChain documents, performs chunking, classifies a rough modality, and writes a local artifact JSON. That gives you the right seam to plug in embeddings, vector stores, and retrieval later without changing the API contract.
 
@@ -48,12 +49,14 @@ You can also install the package itself with pip:
 pip install -e .
 ```
 
-Optional Pinecone indexing env vars:
+Optional vector indexing env vars:
 
 ```bash
-PINECONE_API_KEY=your-pinecone-api-key
-PINECONE_INDEX_NAME=your-pinecone-index
-PINECONE_NAMESPACE=your-namespace
+INGESTION_VECTOR_PROVIDER=chroma
+INGESTION_CHROMA_PERSIST_DIR=./data/ingestion/chroma
+INGESTION_CHROMA_COLLECTION=ingestion_chunks
+
+# Optional OpenAI embeddings (if omitted, local hash embeddings are used)
 OPENAI_API_KEY=your-openai-api-key
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIMENSIONS=1536

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -44,3 +45,14 @@ class LocalFileStore:
             seen.add(file_path)
             if file_path.exists():
                 file_path.unlink()
+
+    def connectivity_status(self) -> dict[str, str]:
+        try:
+            self._settings.upload_dir.mkdir(parents=True, exist_ok=True)
+            self._settings.artifact_dir.mkdir(parents=True, exist_ok=True)
+            probe_file = self._settings.artifact_dir / f".health-{uuid.uuid4().hex}"
+            probe_file.write_text("ok", encoding="utf-8")
+            probe_file.unlink(missing_ok=True)
+            return {"status": "up"}
+        except Exception as exc:
+            return {"status": "down", "error": str(exc)}

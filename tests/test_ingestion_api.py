@@ -20,8 +20,8 @@ class FakeVectorIndexer:
         indexed_vectors = len(documents)
         self.upserts.append((job_id, namespace, indexed_vectors))
         return VectorUpsertResult(
-            provider="pinecone",
-            index_name="unit-test-index",
+            provider="chroma",
+            index_name="unit-test-collection",
             namespace=namespace,
             indexed_vectors=indexed_vectors,
         )
@@ -34,6 +34,9 @@ class FakeVectorIndexer:
         expected_chunk_count: int,
     ) -> None:
         self.deletes.append((job_id, namespace, expected_chunk_count))
+
+    def connectivity_status(self) -> dict[str, str]:
+        return {"status": "up", "provider": "chroma", "index_name": "unit-test-collection"}
 
 
 @pytest.fixture
@@ -48,6 +51,9 @@ def test_client(tmp_path: Path) -> TestClient:
         upload_chunk_size_bytes=1024,
         langchain_chunk_size=10,
         langchain_chunk_overlap=2,
+        vector_provider="none",
+        chroma_persist_dir=tmp_path / "chroma",
+        chroma_collection_name="test-ingestion",
     )
     app = create_app(settings=settings)
     with TestClient(app) as client:
@@ -142,6 +148,9 @@ def test_upload_can_write_to_configured_vector_indexer(tmp_path: Path) -> None:
                 upload_chunk_size_bytes=1024,
                 langchain_chunk_size=8,
                 langchain_chunk_overlap=0,
+                vector_provider="none",
+                chroma_persist_dir=tmp_path / "vector-data" / "chroma",
+                chroma_collection_name="test-vector",
             ),
             vector_indexer=fake_vector_indexer,
         )
@@ -156,8 +165,8 @@ def test_upload_can_write_to_configured_vector_indexer(tmp_path: Path) -> None:
 
         final_status = _wait_for_terminal_state(client, payload["job_id"])
         assert final_status["status"] == "COMPLETED"
-        assert final_status["result"]["vector_store"]["provider"] == "pinecone"
-        assert final_status["result"]["vector_store"]["index_name"] == "unit-test-index"
+        assert final_status["result"]["vector_store"]["provider"] == "chroma"
+        assert final_status["result"]["vector_store"]["index_name"] == "unit-test-collection"
         assert fake_vector_indexer.upserts
 
         delete_response = client.delete(f"/api/v1/ingestion/jobs/{payload['job_id']}")
@@ -165,3 +174,13 @@ def test_upload_can_write_to_configured_vector_indexer(tmp_path: Path) -> None:
         deleted_status = _wait_for_terminal_state(client, payload["job_id"])
         assert deleted_status["status"] == "DELETED"
         assert fake_vector_indexer.deletes
+
+
+def test_healthz_reports_component_connectivity(test_client: TestClient) -> None:
+    response = test_client.get("/healthz")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["components"]["sqlite"]["status"] == "up"
+    assert payload["components"]["storage"]["status"] == "up"
+    assert payload["components"]["vector_store"]["status"] == "skipped"

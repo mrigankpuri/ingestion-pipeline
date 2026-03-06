@@ -9,8 +9,8 @@ def test_load_settings_reads_env_local_without_overriding_shell_env(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     for key in (
-        "PINECONE_API_KEY",
-        "PINECONE_INDEX_NAME",
+        "INGESTION_VECTOR_PROVIDER",
+        "INGESTION_CHROMA_COLLECTION",
         "OPENAI_API_KEY",
         "OPENAI_EMBEDDING_DIMENSIONS",
     ):
@@ -19,18 +19,18 @@ def test_load_settings_reads_env_local_without_overriding_shell_env(
     (tmp_path / ".env.local").write_text(
         "\n".join(
             [
-                "PINECONE_API_KEY=file-pinecone-key",
+                "INGESTION_VECTOR_PROVIDER=chroma",
                 "OPENAI_API_KEY=file-openai-key",
                 "OPENAI_EMBEDDING_DIMENSIONS=1024",
             ]
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("PINECONE_INDEX_NAME", "shell-index")
+    monkeypatch.setenv("INGESTION_CHROMA_COLLECTION", "shell-collection")
 
     settings = load_settings()
 
-    assert settings.pinecone_api_key == "file-pinecone-key"
-    assert settings.pinecone_index_name == "shell-index"
+    assert settings.vector_provider == "chroma"
+    assert settings.chroma_collection_name == "shell-collection"
     assert settings.openai_api_key == "file-openai-key"
     assert settings.openai_embedding_dimensions == 1024

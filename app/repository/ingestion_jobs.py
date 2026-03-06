@@ -301,6 +301,14 @@ class IngestionRepository:
             ).fetchone()
         return bool(row and row["delete_requested"])
 
+    def connectivity_status(self) -> dict[str, str]:
+        try:
+            with self._lock:
+                self._connection.execute("SELECT 1").fetchone()
+            return {"status": "up"}
+        except Exception as exc:
+            return {"status": "down", "error": str(exc)}
+
     def close(self) -> None:
         with self._lock:
             self._connection.close()
