@@ -1,0 +1,32 @@
+[project]
+name = "ingestion-pipeline"
+version = "0.1.0"
+description = "Modular FastAPI ingestion service for enterprise knowledge workflows."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.129.0",
+    "langchain-core==1.2.13",
+    "langchain-openai==1.1.10",
+    "langchain-text-splitters==1.1.0",
+    "pinecone==8.1.0",
+    "pydantic==2.11.0",
+    "python-multipart==0.0.22",
+    "uvicorn==0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.0.2",
+]
+
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
