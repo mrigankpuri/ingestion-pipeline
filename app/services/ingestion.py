@@ -68,6 +68,9 @@ class IngestionService:
     def get_job(self, job_id: str) -> JobRecord | None:
         return self.repository.get_job(job_id)
 
+    def get_all_jobs(self) -> list[JobRecord]:
+        return self.repository.get_all_jobs()
+
     async def request_delete(self, job_id: str) -> JobRecord | None:
         record = self.repository.get_job(job_id)
         if record is None:

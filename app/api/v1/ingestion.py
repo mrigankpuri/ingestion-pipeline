@@ -26,6 +26,14 @@ async def upload_and_ingest(
     return to_job_status_response(record)
 
 
+@router.get("/jobs", response_model=list[JobStatusResponse])
+def get_all_jobs(
+    service: IngestionService = Depends(get_ingestion_service),
+) -> list[JobStatusResponse]:
+    records = service.get_all_jobs()
+    return [_to_job_status(record) for record in records]
+
+
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 def get_job_status(
     job_id: str,

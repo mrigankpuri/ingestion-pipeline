@@ -157,6 +157,13 @@ class IngestionRepository:
             return None
         return self._row_to_record(row)
 
+    def get_all_jobs(self) -> list[JobRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM ingestion_jobs ORDER BY created_at DESC",
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def mark_processing(self, job_id: str) -> JobRecord | None:
         now = self._now_iso()
         with self._lock:

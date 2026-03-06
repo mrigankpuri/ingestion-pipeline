@@ -17,6 +17,7 @@ The first processor is intentionally simple, but it now uses LangChain primitive
 
 ## API
 
+- `GET /api/v1/ingestion/jobs`
 - `POST /api/v1/ingestion/uploads`
 - `GET /api/v1/ingestion/jobs/{job_id}`
 - `DELETE /api/v1/ingestion/jobs/{job_id}`
