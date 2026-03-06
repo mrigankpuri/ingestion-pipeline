@@ -43,6 +43,14 @@ The app auto-loads local secrets from `.env.local` if that file exists.
 pytest
 ```
 
+## Quality Checks
+
+```bash
+ruff check app tests
+mypy app
+pytest
+```
+
 You can also install the package itself with pip:
 
 ```bash

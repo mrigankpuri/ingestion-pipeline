@@ -1,8 +1,10 @@
 chromadb==1.5.2
 fastapi==0.129.0
+httpx==0.28.1
 langchain-core==1.2.13
 langchain-openai==1.1.10
 langchain-text-splitters==1.1.0
 pydantic==2.11.0
+pytest==9.0.2
 python-multipart==0.0.22
 uvicorn==0.40.0

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from fastapi import UploadFile
 
@@ -34,10 +34,13 @@ class LocalFileStore:
         destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return destination
 
-    def cleanup_paths(self, paths: list[str | Path | None]) -> None:
+    @staticmethod
+    def cleanup_paths(paths: Sequence[str | Path | None]) -> None:
         seen: set[Path] = set()
         for raw_path in paths:
-            if raw_path in (None, ""):
+            if raw_path is None:
+                continue
+            if isinstance(raw_path, str) and raw_path == "":
                 continue
             file_path = Path(raw_path)
             if file_path in seen:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 from fastapi import FastAPI
 
@@ -56,9 +57,11 @@ def create_app(
         ),
         lifespan=lifespan,
     )
-    app.state.ingestion_repository = repository
-    app.state.ingestion_service = service
-    app.state.ingestion_vector_indexer = resolved_vector_indexer
+    # Cast through Any to avoid IDE false positives on dynamic FastAPI state attributes.
+    app_state = cast(Any, app).state
+    setattr(app_state, "ingestion_repository", repository)
+    setattr(app_state, "ingestion_service", service)
+    setattr(app_state, "ingestion_vector_indexer", resolved_vector_indexer)
     app.include_router(ingestion_router)
 
     @app.get("/healthz")

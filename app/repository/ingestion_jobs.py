@@ -74,7 +74,7 @@ class IngestionRepository:
 
     @staticmethod
     def _decode_json(raw_value: str | None, default: Any) -> Any:
-        if raw_value in (None, ""):
+        if raw_value is None or raw_value == "":
             return default
         return json.loads(raw_value)
 

@@ -18,9 +18,6 @@ class JobStatus(str, Enum):
 ACTIVE_STATUSES = frozenset(
     {JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.DELETE_REQUESTED}
 )
-TERMINAL_STATUSES = frozenset(
-    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.DELETED}
-)
 
 
 class JobStatusResponse(BaseModel):

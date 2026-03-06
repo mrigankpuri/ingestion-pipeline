@@ -5,9 +5,10 @@ import json
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.documents import Document
+from pydantic import SecretStr
 
 from app.core.config import IngestionSettings
 
@@ -40,8 +41,6 @@ class VectorIndexer(ABC):
         self,
         *,
         job_id: str,
-        namespace: str | None,
-        expected_chunk_count: int,
     ) -> None:
         raise NotImplementedError
 
@@ -50,7 +49,20 @@ class VectorIndexer(ABC):
         raise NotImplementedError
 
 
-class NoOpVectorIndexer(VectorIndexer):
+class StaticVectorIndexer(VectorIndexer):
+    def __init__(
+        self,
+        *,
+        provider: str,
+        status: str,
+        reason: str,
+        fail_on_upsert: bool,
+    ) -> None:
+        self._provider = provider
+        self._status = status
+        self._reason = reason
+        self._fail_on_upsert = fail_on_upsert
+
     def upsert_documents(
         self,
         *,
@@ -58,6 +70,8 @@ class NoOpVectorIndexer(VectorIndexer):
         namespace: str | None,
         documents: list[Document],
     ) -> VectorUpsertResult:
+        if self._fail_on_upsert:
+            raise RuntimeError(f"Vector indexer '{self._provider}' unavailable: {self._reason}")
         return VectorUpsertResult(
             provider="none",
             index_name=None,
@@ -69,45 +83,16 @@ class NoOpVectorIndexer(VectorIndexer):
         self,
         *,
         job_id: str,
-        namespace: str | None,
-        expected_chunk_count: int,
     ) -> None:
         return None
 
     def connectivity_status(self) -> dict[str, str]:
-        return {
-            "status": "skipped",
-            "provider": "none",
-            "reason": "vector indexing disabled",
-        }
-
-
-class UnavailableVectorIndexer(VectorIndexer):
-    def __init__(self, *, provider: str, reason: str) -> None:
-        self._provider = provider
-        self._reason = reason
-
-    def upsert_documents(
-        self,
-        *,
-        job_id: str,
-        namespace: str | None,
-        documents: list[Document],
-    ) -> VectorUpsertResult:
-        raise RuntimeError(
-            f"Vector indexer '{self._provider}' unavailable: {self._reason}"
-        )
-
-    def delete_job(
-        self,
-        *,
-        job_id: str,
-        namespace: str | None,
-        expected_chunk_count: int,
-    ) -> None:
-        return None
-
-    def connectivity_status(self) -> dict[str, str]:
+        if self._status == "skipped":
+            return {
+                "status": "skipped",
+                "provider": self._provider,
+                "reason": self._reason,
+            }
         return {
             "status": "down",
             "provider": self._provider,
@@ -115,73 +100,28 @@ class UnavailableVectorIndexer(VectorIndexer):
         }
 
 
-class TextEmbedder(Protocol):
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        ...
-
-
-class OpenAITextEmbedder:
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        model: str,
-        dimensions: int | None,
-    ) -> None:
-        from langchain_openai import OpenAIEmbeddings
-
-        kwargs: dict[str, str | int] = {"api_key": api_key, "model": model}
-        if dimensions is not None:
-            kwargs["dimensions"] = dimensions
-        self._embedder: OpenAIEmbeddings = OpenAIEmbeddings(**kwargs)
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self._embedder.embed_documents(texts)
-
-
-class HashTextEmbedder:
-    def __init__(self, *, dimensions: int = 384) -> None:
-        self._dimensions = max(64, dimensions)
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._embed_text(text) for text in texts]
-
-    def _embed_text(self, text: str) -> list[float]:
-        vector = [0.0] * self._dimensions
-        tokens = text.split()
-        if not tokens:
-            tokens = ["_empty_"]
-
-        for token in tokens:
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            index = int.from_bytes(digest[:4], byteorder="big") % self._dimensions
-            sign = 1.0 if digest[4] % 2 == 0 else -1.0
-            vector[index] += sign
-
-        norm = math.sqrt(sum(value * value for value in vector))
-        if norm == 0:
-            return vector
-        return [value / norm for value in vector]
-
-
 class ChromaVectorIndexer(VectorIndexer):
-    def __init__(
-        self,
-        *,
-        persist_dir: str,
-        collection_name: str,
-        embedder: TextEmbedder,
-        embedding_provider: str,
-    ) -> None:
+    def __init__(self, *, settings: IngestionSettings) -> None:
         import chromadb
 
-        self._embedding_provider = embedding_provider
-        self._client = chromadb.PersistentClient(path=persist_dir)
+        self._collection_name = settings.chroma_collection_name
+        self._client = chromadb.PersistentClient(path=str(settings.chroma_persist_dir))
         self._collection: Collection = self._client.get_or_create_collection(
-            name=collection_name
+            name=self._collection_name
         )
-        self._collection_name = collection_name
-        self._embedder = embedder
+        self._openai_embeddings: OpenAIEmbeddings | None = None
+        self._local_dimensions = settings.openai_embedding_dimensions or 384
+        self._embedding_provider = "hash-local"
+
+        if settings.openai_api_key:
+            from langchain_openai import OpenAIEmbeddings
+
+            self._openai_embeddings = OpenAIEmbeddings(
+                api_key=SecretStr(settings.openai_api_key),
+                model=settings.openai_embedding_model,
+                dimensions=settings.openai_embedding_dimensions,
+            )
+            self._embedding_provider = "openai"
 
     def upsert_documents(
         self,
@@ -199,22 +139,20 @@ class ChromaVectorIndexer(VectorIndexer):
             )
 
         ids: list[str] = []
-        metadatas: list[dict[str, str | int | float | bool]] = []
         texts: list[str] = []
+        metadatas: list[dict[str, str | int | float | bool]] = []
         for offset, document in enumerate(documents):
             chunk_index = self._resolve_chunk_index(document, offset)
-            ids.append(self._vector_id(job_id, chunk_index))
-            metadatas.append(
-                self._build_metadata(job_id=job_id, namespace=namespace, document=document, chunk_index=chunk_index)
-            )
+            ids.append(f"{job_id}-{chunk_index:06d}")
             texts.append(document.page_content)
+            metadatas.append(self._build_metadata(job_id, chunk_index, namespace, document))
 
-        embeddings = self._embedder.embed_documents(texts)
+        embeddings = self._embed_documents(texts)
         self._collection.upsert(
             ids=ids,
             documents=texts,
-            embeddings=embeddings,
-            metadatas=metadatas,
+            embeddings=cast(Any, embeddings),
+            metadatas=cast(Any, metadatas),
         )
         return VectorUpsertResult(
             provider="chroma",
@@ -227,15 +165,7 @@ class ChromaVectorIndexer(VectorIndexer):
         self,
         *,
         job_id: str,
-        namespace: str | None,
-        expected_chunk_count: int,
     ) -> None:
-        if expected_chunk_count > 0:
-            self._collection.delete(
-                ids=[self._vector_id(job_id, idx) for idx in range(expected_chunk_count)]
-            )
-            return
-
         self._collection.delete(where={"job_id": job_id})
 
     def connectivity_status(self) -> dict[str, str]:
@@ -256,6 +186,24 @@ class ChromaVectorIndexer(VectorIndexer):
                 "error": str(exc),
             }
 
+    def _embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if self._openai_embeddings is not None:
+            return self._openai_embeddings.embed_documents(texts)
+        return [self._hash_embed_text(text) for text in texts]
+
+    def _hash_embed_text(self, text: str) -> list[float]:
+        vector = [0.0] * max(64, self._local_dimensions)
+        tokens = text.split() or ["_empty_"]
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            index = int.from_bytes(digest[:4], byteorder="big") % len(vector)
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[index] += sign
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm == 0:
+            return vector
+        return [value / norm for value in vector]
+
     @staticmethod
     def _resolve_chunk_index(document: Document, fallback_index: int) -> int:
         raw_index = document.metadata.get("chunk_index")
@@ -263,17 +211,12 @@ class ChromaVectorIndexer(VectorIndexer):
             return raw_index
         return fallback_index
 
-    @staticmethod
-    def _vector_id(job_id: str, chunk_index: int) -> str:
-        return f"{job_id}-{chunk_index:06d}"
-
     def _build_metadata(
         self,
-        *,
         job_id: str,
+        chunk_index: int,
         namespace: str | None,
         document: Document,
-        chunk_index: int,
     ) -> dict[str, str | int | float | bool]:
         metadata: dict[str, str | int | float | bool] = {
             "job_id": job_id,
@@ -299,37 +242,29 @@ class ChromaVectorIndexer(VectorIndexer):
         return json.dumps(value, default=str, sort_keys=True)
 
 
-def _build_embedder(settings: IngestionSettings) -> tuple[TextEmbedder, str]:
-    if settings.openai_api_key:
-        return (
-            OpenAITextEmbedder(
-                api_key=settings.openai_api_key,
-                model=settings.openai_embedding_model,
-                dimensions=settings.openai_embedding_dimensions,
-            ),
-            "openai",
-        )
-    local_dimensions = settings.openai_embedding_dimensions or 384
-    return HashTextEmbedder(dimensions=local_dimensions), "hash-local"
-
-
 def build_vector_indexer(settings: IngestionSettings) -> VectorIndexer:
     provider = settings.vector_provider
     if provider in {"none", "off", "disabled"}:
-        return NoOpVectorIndexer()
+        return StaticVectorIndexer(
+            provider="none",
+            status="skipped",
+            reason="vector indexing disabled",
+            fail_on_upsert=False,
+        )
     if provider != "chroma":
-        return UnavailableVectorIndexer(
+        return StaticVectorIndexer(
             provider=provider,
+            status="down",
             reason=f"Unsupported provider '{provider}'. Supported providers: chroma, none",
+            fail_on_upsert=True,
         )
 
     try:
-        embedder, embedding_provider = _build_embedder(settings)
-        return ChromaVectorIndexer(
-            persist_dir=str(settings.chroma_persist_dir),
-            collection_name=settings.chroma_collection_name,
-            embedder=embedder,
-            embedding_provider=embedding_provider,
-        )
+        return ChromaVectorIndexer(settings=settings)
     except Exception as exc:
-        return UnavailableVectorIndexer(provider="chroma", reason=str(exc))
+        return StaticVectorIndexer(
+            provider="chroma",
+            status="down",
+            reason=str(exc),
+            fail_on_upsert=True,
+        )

@@ -124,8 +124,7 @@ class IngestionService:
             await self._cleanup_and_mark_deleted(job_id)
             return
 
-        artifact_path: Path | None = None
-        extra_paths: list[str | Path] = []
+        extra_paths: list[str | Path | None] = []
         try:
             await self._delay_with_delete_checks(job_id)
 
@@ -207,7 +206,7 @@ class IngestionService:
         self,
         job_id: str,
         *,
-        extra_paths: Sequence[str | Path] | None = None,
+        extra_paths: Sequence[str | Path | None] | None = None,
     ) -> None:
         record = self.repository.get_job(job_id)
         cleanup_targets: list[str | Path | None] = list(extra_paths or [])
@@ -216,27 +215,9 @@ class IngestionService:
                 await asyncio.to_thread(
                     self.vector_indexer.delete_job,
                     job_id=job_id,
-                    namespace=record.namespace,
-                    expected_chunk_count=self._expected_chunk_count(record),
                 )
             cleanup_targets.extend([record.stored_file_path, record.artifact_path])
 
         await asyncio.to_thread(self.file_store.cleanup_paths, cleanup_targets)
         if record is not None:
             self.repository.mark_deleted(job_id)
-
-    @staticmethod
-    def _expected_chunk_count(record: JobRecord) -> int:
-        if not isinstance(record.result, dict):
-            return 0
-
-        vector_store_result = record.result.get("vector_store")
-        if isinstance(vector_store_result, dict):
-            raw_count = vector_store_result.get("indexed_vectors")
-            if isinstance(raw_count, int):
-                return raw_count
-
-        raw_chunk_count = record.result.get("chunks_indexed")
-        if isinstance(raw_chunk_count, int):
-            return raw_chunk_count
-        return 0

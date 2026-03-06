@@ -114,7 +114,7 @@ class LangChainIngestionProcessor:
         content_type: str | None,
     ) -> list[Document]:
         page_content = self._coerce_page_content(raw)
-        document_metadata = {
+        document_metadata: dict[str, Any] = {
             "source": file_path.name,
             "source_path": str(file_path),
             "modality": modality,
@@ -145,7 +145,7 @@ class LangChainIngestionProcessor:
     def _annotate_chunks(documents: list[Document]) -> list[Document]:
         annotated_documents: list[Document] = []
         for index, document in enumerate(documents):
-            chunk_metadata = dict(document.metadata)
+            chunk_metadata: dict[str, Any] = dict(document.metadata)
             chunk_metadata["chunk_index"] = index
             annotated_documents.append(
                 Document(page_content=document.page_content, metadata=chunk_metadata)

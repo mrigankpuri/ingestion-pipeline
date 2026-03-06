@@ -1,22 +1,32 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
+from langchain_core.documents import Document
 
 from app.core.config import IngestionSettings
 from app.main import create_app
-from app.services.vector_indexer import VectorUpsertResult
+from app.services.vector_indexer import VectorIndexer, VectorUpsertResult
 
 
 class FakeVectorIndexer:
     def __init__(self) -> None:
         self.upserts: list[tuple[str, str | None, int]] = []
-        self.deletes: list[tuple[str, str | None, int]] = []
+        self.deletes: list[str] = []
 
-    def upsert_documents(self, *, job_id: str, namespace: str | None, documents: list) -> VectorUpsertResult:
+    def upsert_documents(
+        self,
+        *,
+        job_id: str,
+        namespace: str | None,
+        documents: list[Document],
+    ) -> VectorUpsertResult:
         indexed_vectors = len(documents)
         self.upserts.append((job_id, namespace, indexed_vectors))
         return VectorUpsertResult(
@@ -30,17 +40,16 @@ class FakeVectorIndexer:
         self,
         *,
         job_id: str,
-        namespace: str | None,
-        expected_chunk_count: int,
     ) -> None:
-        self.deletes.append((job_id, namespace, expected_chunk_count))
+        self.deletes.append(job_id)
 
-    def connectivity_status(self) -> dict[str, str]:
+    @staticmethod
+    def connectivity_status() -> dict[str, str]:
         return {"status": "up", "provider": "chroma", "index_name": "unit-test-collection"}
 
 
 @pytest.fixture
-def test_client(tmp_path: Path) -> TestClient:
+def test_client(tmp_path: Path) -> Generator[TestClient, None, None]:
     settings = IngestionSettings(
         data_dir=tmp_path / "data",
         upload_dir=tmp_path / "uploads",
@@ -60,16 +69,22 @@ def test_client(tmp_path: Path) -> TestClient:
         yield client
 
 
+def _json_dict(response: Response) -> dict[str, Any]:
+    payload = response.json()
+    assert isinstance(payload, dict)
+    return payload
+
+
 def _wait_for_terminal_state(
     client: TestClient,
     job_id: str,
     timeout_seconds: float = 5.0,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     start = time.time()
     while time.time() - start < timeout_seconds:
         response = client.get(f"/api/v1/ingestion/jobs/{job_id}")
         assert response.status_code == 200
-        payload = response.json()
+        payload = _json_dict(response)
         if payload["completion_event"]:
             return payload
         time.sleep(0.05)
@@ -83,7 +98,7 @@ def test_upload_completes_and_sets_completion_event(test_client: TestClient) -> 
         data={"namespace": "knowledge-team", "metadata_json": '{"owner":"backend"}'},
     )
     assert response.status_code == 202
-    payload = response.json()
+    payload = _json_dict(response)
 
     final_status = _wait_for_terminal_state(test_client, payload["job_id"])
     assert final_status["status"] == "COMPLETED"
@@ -101,7 +116,7 @@ def test_delete_mid_flight_cleans_up_and_marks_deleted(test_client: TestClient) 
         data={"namespace": "knowledge-team"},
     )
     assert response.status_code == 202
-    payload = response.json()
+    payload = _json_dict(response)
 
     delete_response = test_client.delete(f"/api/v1/ingestion/jobs/{payload['job_id']}")
     assert delete_response.status_code == 202
@@ -110,8 +125,10 @@ def test_delete_mid_flight_cleans_up_and_marks_deleted(test_client: TestClient) 
     assert final_status["status"] == "DELETED"
     assert final_status["completion_event"] is True
 
-    upload_dir = Path(test_client.app.state.ingestion_service.settings.upload_dir)
-    artifact_dir = Path(test_client.app.state.ingestion_service.settings.artifact_dir)
+    app = cast(Any, test_client.app)
+    ingestion_service = cast(Any, getattr(app.state, "ingestion_service"))
+    upload_dir = Path(ingestion_service.settings.upload_dir)
+    artifact_dir = Path(ingestion_service.settings.artifact_dir)
     assert list(upload_dir.glob("*")) == []
     assert list(artifact_dir.glob("*")) == []
 
@@ -122,7 +139,7 @@ def test_delete_after_completion_removes_completed_artifact(test_client: TestCli
         files={"file": ("handbook.md", b"# Handbook", "text/markdown")},
     )
     assert response.status_code == 202
-    payload = response.json()
+    payload = _json_dict(response)
 
     final_status = _wait_for_terminal_state(test_client, payload["job_id"])
     assert final_status["status"] == "COMPLETED"
@@ -152,7 +169,7 @@ def test_upload_can_write_to_configured_vector_indexer(tmp_path: Path) -> None:
                 chroma_persist_dir=tmp_path / "vector-data" / "chroma",
                 chroma_collection_name="test-vector",
             ),
-            vector_indexer=fake_vector_indexer,
+            vector_indexer=cast(VectorIndexer, fake_vector_indexer),
         )
     ) as client:
         response = client.post(
@@ -161,7 +178,7 @@ def test_upload_can_write_to_configured_vector_indexer(tmp_path: Path) -> None:
             data={"namespace": "vector-test"},
         )
         assert response.status_code == 202
-        payload = response.json()
+        payload = _json_dict(response)
 
         final_status = _wait_for_terminal_state(client, payload["job_id"])
         assert final_status["status"] == "COMPLETED"
@@ -179,7 +196,7 @@ def test_upload_can_write_to_configured_vector_indexer(tmp_path: Path) -> None:
 def test_healthz_reports_component_connectivity(test_client: TestClient) -> None:
     response = test_client.get("/healthz")
     assert response.status_code == 200
-    payload = response.json()
+    payload = _json_dict(response)
     assert payload["status"] == "ok"
     assert payload["components"]["sqlite"]["status"] == "up"
     assert payload["components"]["storage"]["status"] == "up"
